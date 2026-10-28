@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Plan Nutricional DO PROCEL</title>
+<meta name="claude:viewport-fit-sides" content="cover">
 <style>
 /* Layout: barra superior con paciente activo + pestañas; cada pestaña es una hoja de trabajo; "Plan" es la hoja imprimible A4 */
 :root{
@@ -200,7 +201,7 @@ const ALIMENTOS_BASE = [
   ['leche','lac','Leche descremada','1 taza (240 ml)',240],['yogur','lac','Yogur natural sin azúcar','3/4 taza',180],
   ['yogurgr','lac','Yogur griego natural','1/2 taza',140],['lpolvo','lac','Leche en polvo descremada','4 cucharadas',24],
   ['pollo','pro','Pechuga de pollo sin piel','30 g cocida',30],['pescado','pro','Pescado blanco (tilapia, corvina)','40 g',40],
-  ['atun','pro','Atún en agua','1/3 de lata',30],['huevo','pro','Huevo entero','1 unidad',50],
+  ['atun','pro','Atún en agua','1/3 lata',30],['huevo','pro','Huevo entero','1 unidad',50],
   ['clara','pro','Clara de huevo','2 unidades',66],['queso','pro','Queso fresco','1 rebanada (30 g)',30],
   ['res','pro','Carne de res magra','30 g cocida',30],['cerdo','pro','Lomo de cerdo magro','30 g cocido',30],
   ['camaron','pro','Camarón','5 medianos',50],['sardina','pro','Sardina en agua','1 unidad',35],
@@ -227,7 +228,7 @@ const r1 = n => Math.round(n*10)/10;
 const uid = () => Math.random().toString(36).slice(2,9);
 const fmtF = iso => { if(!iso) return '—'; const [y,m,d]=iso.split('-'); return `${d}/${m}/${y}`; };
 const addDays = (iso,n) => { const d=new Date(iso+'T12:00:00'); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); };
-const hoy = () => new Date().toISOString().slice(0,10);
+const hoy = () => { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
 function toast(t){ const el=$('#toast'); el.textContent=t; el.hidden=false; clearTimeout(toast._t); toast._t=setTimeout(()=>el.hidden=true,2200); }
 const getPath = (o,p) => p.split('.').reduce((a,k)=>a?.[k],o);
 function setPath(o,p,v){ const ks=p.split('.'); let a=o; ks.slice(0,-1).forEach(k=>{ if(a[k]==null) a[k]={}; a=a[k]; }); a[ks.at(-1)]=v; }
@@ -417,24 +418,293 @@ function elegir(p,g,k,n,d,seed,ex,pref,dm,dia){
   if(g==='cer'&&fijo&&n>=3){ const a1=tomar(L,st), a2=tomar(L,st+1); return a1.id===a2.id?[{f:a1.id,n}]:[{f:a1.id,n:n-1},{f:a2.id,n:1}]; }
   return [{f:tomar(L,st).id,n}];
 }
-function generarDia(p,d,seed){
-  autoCfg(p);
-  const act=TIEMPOS.filter(([k])=>p.datos.tiempos[k]).map(([k])=>k); const dia={}; act.forEach(k=>dia[k]=[]);
-  if(!act.length) return dia;
-  const ex=tokens(p.datos.noCome), pref=tokens(p.datos.prefiere), dm=esDM(p);
+/* ---------- Recetario de platos ecuatorianos ----------
+   Cada plato define su composición base en intercambios [alimento, porciones].
+   Al aplicarlo, las cantidades se ajustan a las metas de esa comida; si falta
+   un grupo se añade como "acompañe con". t = tipos de comida donde aplica. */
+const PLATOS = [
+  // Desayunos
+  {id:'tigrillo',t:['desayuno'],n:'Tigrillo con huevo y queso',items:[['verde',2],['huevo',1],['queso',1],['aceite',1]],prep:'Cocine el verde, májelo y saltéelo con el huevo batido, el queso desmenuzado, cebolla y tomate picados, en sartén antiadherente con la cucharadita de aceite.'},
+  {id:'bolon',t:['desayuno'],n:'Bolón de verde al horno con huevo duro',items:[['verde',2],['queso',1],['huevo',1],['aceite',1]],prep:'Verde cocinado y majado con el queso; forme la bola y dórela al horno o en sartén, sin freír.'},
+  {id:'motepillo',t:['desayuno'],n:'Mote pillo',items:[['mote',2],['huevo',1],['aceite',1]],prep:'Saltee el mote cocinado con el huevo batido, cebolla blanca picada y achiote.'},
+  {id:'avenafrutilla',t:['desayuno'],n:'Avena con frutilla y chía',items:[['avena',2],['leche',1],['frutilla',1],['chia',1]],prep:'Cocine la avena en la leche sin azúcar (puede usar canela o clavo de olor). Al servir agregue la frutilla picada y la chía.'},
+  {id:'sanduche',t:['desayuno'],n:'Sánduche de huevo y queso con café con leche',items:[['pan',2],['huevo',1],['queso',1],['leche',1]],prep:'Pan integral con huevo duro o revuelto y queso fresco. Café con leche descremada, sin azúcar.'},
+  {id:'tortillamaiz',t:['desayuno'],n:'Tortillas de maíz con huevo y aguacate',items:[['tortilla',2],['huevo',1],['aguacate',1]],prep:'Tortillas de maíz calentadas en sartén sin grasa, con huevo revuelto y aguacate.'},
+  {id:'granola',t:['desayuno'],n:'Yogur con granola casera y guineo',items:[['yogur',1],['avena',1],['guineo',1],['almendra',1]],prep:'Tueste la avena en sartén con las almendras picadas y sírvala sobre el yogur natural con el guineo en rodajas.'},
+  {id:'batidopapaya',t:['desayuno'],n:'Batido de papaya con avena y huevo duro',items:[['leche',1],['papaya',1],['avena',1],['huevo',1]],prep:'Licúe la leche con la papaya y la avena, sin azúcar. Acompañe con el huevo duro.'},
+  {id:'tostadaaguacate',t:['desayuno'],n:'Tostadas integrales con aguacate y huevo',items:[['pan',2],['aguacate',1],['huevo',1]],prep:'Pan integral tostado con aguacate aplastado, huevo duro en rodajas y tomate.'},
+  {id:'quinualeche',t:['desayuno'],n:'Quinua con leche y manzana',items:[['quinua',2],['leche',1],['manzana',1]],prep:'Quinua cocinada en la leche con canela, sin azúcar, y manzana picada.'},
+  // Media mañana y media tarde
+  {id:'yogurpapaya',t:['snack'],n:'Yogur con papaya',items:[['yogur',1],['papaya',1]],prep:''},
+  {id:'manzanamani',t:['snack'],n:'Manzana con mantequilla de maní',items:[['manzana',1],['mmani',1]],prep:''},
+  {id:'mandarinaalm',t:['snack'],n:'Mandarina y almendras',items:[['mandarina',1],['almendra',1]],prep:''},
+  {id:'panqueso',t:['snack'],n:'Pan integral con queso fresco',items:[['pan',1],['queso',1]],prep:''},
+  {id:'choclequeso',t:['snack'],n:'Choclo con queso',items:[['choclo',1],['queso',1]],prep:''},
+  {id:'granadillanuez',t:['snack'],n:'Granadilla y nueces',items:[['granadilla',1],['nuez',1]],prep:''},
+  {id:'galletaqueso',t:['snack'],n:'Galletas integrales con queso',items:[['galleta',1],['queso',1]],prep:''},
+  {id:'griegomora',t:['snack'],n:'Yogur griego con mora',items:[['yogurgr',1],['mora',1]],prep:''},
+  {id:'batidofrutilla',t:['snack'],n:'Batido de frutilla con leche',items:[['leche',1],['frutilla',1]],prep:'Sin azúcar.'},
+  {id:'manipina',t:['snack'],n:'Piña con maní',items:[['pina',1],['mani',1]],prep:''},
+  {id:'galletamandarina',t:['snack'],n:'Galletas integrales con mandarina',items:[['galleta',1],['mandarina',1]],prep:''},
+  {id:'panguineo',t:['snack'],n:'Tostada integral con guineo y canela',items:[['pan',1],['guineo',1]],prep:''},
+  {id:'choclopapaya',t:['snack'],n:'Choclo cocinado y papaya',items:[['choclo',1],['papaya',1]],prep:''},
+  {id:'quinuamanzana',t:['snack'],n:'Quinua con manzana y canela',items:[['quinua',1],['manzana',1]],prep:'Quinua cocida tibia con manzana picada y canela, sin azúcar.'},
+  {id:'huevonaranja',t:['snack'],n:'Huevo duro y naranja',items:[['huevo',1],['naranja',1]],prep:''},
+  // Almuerzos
+  {id:'secopollo',t:['almuerzo'],n:'Seco de pollo con arroz y menestra de lenteja',items:[['arroz',2],['lenteja',1],['pollo',3],['ensalada',1],['aceite',1]],prep:'Pollo sin piel guisado con tomate, pimiento, cebolla y culantro, sin azúcar. Menestra cocida sin manteca.'},
+  {id:'corvinavapor',t:['almuerzo'],n:'Corvina al vapor con arroz integral y brócoli',items:[['arrozi',2],['pescado',3],['brocoli',1],['ensalada',1],['aceite',1]],prep:'Pescado al vapor con limón, ajo y culantro. Brócoli al vapor.'},
+  {id:'carneasada',t:['almuerzo'],n:'Carne asada con menestra de fréjol y arroz',items:[['arroz',2],['frejol',1],['res',3],['ensalada',1],['aceite',1]],prep:'Carne magra a la plancha, sin grasa visible. Menestra sin manteca ni chicharrón.'},
+  {id:'encebollado',t:['almuerzo'],n:'Encebollado de atún',items:[['yuca',2],['atun',3],['tomate',1],['aceite',1]],prep:'Caldo con yuca, atún o albacora, cebolla curtida y tomate. Sin chifles ni pan.'},
+  {id:'locro',t:['almuerzo'],n:'Locro de papa con pollo y aguacate',items:[['papa',2],['pollo',2],['queso',1],['ensalada',1],['aguacate',1]],prep:'Locro preparado con leche descremada en vez de crema, con el queso medido y pollo desmechado encima.'},
+  {id:'pollojugo',t:['almuerzo'],n:'Pollo al jugo con quinua y vainitas',items:[['quinua',2],['pollo',3],['vainita',1],['zanahoria',1],['aceite',1]],prep:'Pollo cocinado en su jugo con cebolla, tomate y comino. Vainitas y zanahoria al vapor.'},
+  {id:'cevichecamaron',t:['almuerzo'],n:'Ceviche de camarón con chocho y choclo',items:[['camaron',3],['chocho',1],['tomate',1],['choclo',1],['aguacate',1]],prep:'Camarón cocido con limón, naranja, tomate y cebolla. Sin chifles ni canguil con mantequilla.'},
+  {id:'estofado',t:['almuerzo'],n:'Estofado de carne con papa y arveja',items:[['res',3],['papa',2],['zanahoria',1],['arveja',1],['aceite',1]],prep:'Carne magra guisada con papa, zanahoria y arveja.'},
+  {id:'sopaquinua',t:['almuerzo'],n:'Sopa de quinua con pollo y verduras',items:[['quinua',2],['pollo',3],['zanahoria',1],['zambo',1],['aceite',1]],prep:'Sopa espesa de quinua con pollo, zanahoria y zambo; sin refrito con manteca.'},
+  {id:'cerdomote',t:['almuerzo'],n:'Lomo de cerdo a la plancha con mote y ensalada',items:[['cerdo',3],['mote',2],['ensalada',1],['aceite',1]],prep:'Lomo sin grasa visible, a la plancha con ajo y comino.'},
+  {id:'corvinapatacon',t:['almuerzo'],n:'Corvina a la plancha con patacones al horno',items:[['pescado',3],['verde',2],['ensalada',1],['aceite',1]],prep:'Patacones aplastados y dorados al horno, sin freír.'},
+  {id:'lentejapescado',t:['almuerzo'],n:'Menestra de lenteja con pescado y maduro asado',items:[['arroz',1],['maduro',1],['lenteja',1],['pescado',3],['ensalada',1],['aceite',1]],prep:'Maduro asado al horno, no frito.'},
+  {id:'garbanzopollo',t:['almuerzo'],n:'Arroz con menestra de garbanzo y pollo a la plancha',items:[['arroz',2],['garbanzo',1],['pollo',3],['ensalada',1],['aceite',1]],prep:''},
+  {id:'tallarin',t:['almuerzo'],n:'Tallarín saltado con pollo y verduras',items:[['fideo',2],['pollo',3],['pimiento',1],['zanahoria',1],['aceite',1]],prep:'Fideo cocido salteado con pollo en tiras, pimiento, cebolla y zanahoria; poca salsa de soya.'},
+  // Meriendas
+  {id:'tortillaverd',t:['merienda'],n:'Tortilla de verduras con pan integral',items:[['huevo',2],['brocoli',1],['pimiento',1],['pan',1],['aceite',1]],prep:'Huevos batidos con brócoli y pimiento picados, en sartén antiadherente.'},
+  {id:'ensaladaatun',t:['merienda'],n:'Ensalada de atún con papa',items:[['atun',2],['papa',1],['ensalada',1],['aguacate',1]],prep:'Atún en agua escurrido con papa cocida en cubos, lechuga, tomate, cebolla y limón.'},
+  {id:'cremazambo',t:['merienda'],n:'Crema de zambo con queso fresco',items:[['zambo',2],['queso',1],['pan',1],['aceite',1]],prep:'Zambo licuado con cebolla y ajo, sin crema de leche. Queso fresco en cubos.'},
+  {id:'pollocamote',t:['merienda'],n:'Pollo a la plancha con camote y verduras',items:[['pollo',2],['camote',1],['brocoli',1],['zanahoria',1],['aceite',1]],prep:'Camote al horno; verduras al vapor.'},
+  {id:'sopaverduras',t:['merienda'],n:'Sopa de verduras con pollo desmechado',items:[['pollo',2],['papa',1],['zanahoria',1],['vainita',1],['aceite',1]],prep:''},
+  {id:'pescadoquinua',t:['merienda'],n:'Pescado al horno con quinua y ensalada',items:[['pescado',2],['quinua',1],['ensalada',1],['aceite',1]],prep:'Pescado al horno con limón y especias.'},
+  {id:'choclomer',t:['merienda'],n:'Choclo con queso y ensalada',items:[['choclo',2],['queso',2],['ensalada',1]],prep:''},
+  {id:'tortquinua',t:['merienda'],n:'Tortillas de quinua con ensalada',items:[['quinua',1],['huevo',1],['queso',1],['ensalada',1],['aceite',1]],prep:'Quinua cocida mezclada con huevo y queso; dore las tortillas en sartén antiadherente.'},
+  {id:'revueltoacelga',t:['merienda'],n:'Revuelto de acelga con huevo y tortilla de maíz',items:[['acelga',1],['huevo',2],['tortilla',1],['aceite',1]],prep:''},
+  {id:'caldopollo',t:['merienda'],n:'Caldo de pollo con verde',items:[['pollo',2],['verde',1],['zanahoria',1],['acelga',1]],prep:'Caldo sin piel de pollo ni grasa.'},
+  {id:'atunsalteado',t:['merienda'],n:'Atún salteado con verduras y arroz integral',items:[['atun',2],['arrozi',1],['pimiento',1],['vainita',1],['aceite',1]],prep:''}
+];
+const PLATOS_IDX = Object.fromEntries(PLATOS.map(x=>[x.id,x]));
+const LIBRE = {desayuno:'Café o aromática sin azúcar', almuerzo:'Agua o aromática sin azúcar', merienda:'Aromática sin azúcar'};
+function frecCocina(d){ const n=(d.diasCocina||[]).filter(Boolean).length; return n>=5?'diario':n>=2?'dos':'uno'; }
+const tipoComida = k => (k==='mm'||k==='mt')?'snack':k;
+const ctxPac = p => ({ex:tokens(p.datos.noCome), pref:tokens(p.datos.prefiere), dm:esDM(p), usados:new Set()});
+
+// Metas de cada tiempo de comida (porciones enteras; la media porción va al tiempo de mayor peso)
+function objetivosComida(p){
+  const act=TIEMPOS.filter(([k])=>p.datos.tiempos[k]).map(([k])=>k), obj={}; act.forEach(k=>obj[k]={});
+  if(!act.length) return obj;
   GK.forEach(g=>{
     const units=Math.round((+p.metas[g]||0)*2); if(!units) return;
     let w=act.map(k=>PESOS[g][k]||0);
     if(w.every(x=>!x)){ const fb=act.includes('almuerzo')?'almuerzo':act.includes('merienda')?'merienda':act[0]; w=act.map(k=>k===fb?1:0); }
-    const ent=Math.floor(units/2), rep=repartir(ent,w).map(x=>x*2);
-    if(units%2){ const im=w.indexOf(Math.max(...w)); rep[im]+=1; }
-    if(ent===0&&units%2===0) return;
-    act.forEach((k,i)=>{ const n=rep[i]/2; if(n>0) dia[k].push(...elegir(p,g,k,n,d,seed,ex,pref,dm,dia)); });
+    const ent=Math.floor(units/2), rep=ent?repartir(ent,w).map(x=>x*2):w.map(()=>0);
+    if(units%2){ rep[w.indexOf(Math.max(...w))]+=1; }
+    act.forEach((k,i)=>{ if(rep[i]) obj[k][g]=rep[i]/2; });
+  });
+  return obj;
+}
+function platosAptos(p,k,ctx){
+  const tipo=tipoComida(k);
+  return PLATOS.filter(x=>x.t.includes(tipo)&&!x.items.some(([f])=>AL[f]&&coincide(AL[f],ctx.ex))&&!ctx.ex.some(t=>norm(x.n).includes(t)));
+}
+function elegirPlato(p,k,tg,d,seed,ctx){
+  const L=platosAptos(p,k,ctx); if(!L.length) return null;
+  const sc=pl=>{ const tot={}; pl.items.forEach(([f,n])=>{ const g=AL[f]?.g; if(g) tot[g]=(tot[g]||0)+n; });
+    let s=0; GK.forEach(g=>{ const a=tot[g]||0, t=tg[g]||0; if(t&&a) s+=Math.abs(a-t)*0.5; else if(a&&!t) s+=3+a; else if(t&&!a) s+=1.2; });
+    if(ctx.dm&&pl.items.some(([f])=>BAJO_DM.includes(f))) s+=2;
+    if(pl.items.some(([f])=>AL[f]&&coincide(AL[f],ctx.pref))) s-=1.5;
+    if(k==='merienda') pl.items.forEach(([f])=>{ if(AL[f]?.g==='pro'&&ctx.usados.has(f)) s+=1.5; });
+    return s; };
+  const S_=new Map(L.map(x=>[x,sc(x)])); L.sort((a,b)=>S_.get(a)-S_.get(b));
+  const best=S_.get(L[0]), buenos=L.filter(x=>S_.get(x)<=best+0.6).length;
+  const fijo=k==='almuerzo'||k==='merienda', blk=(fijo&&p.auto.variedad==='practica')?[0,0,0,1,1,1,2][d]:d;
+  const off={desayuno:0,mm:2,almuerzo:0,mt:5,merienda:3}[k]||0;
+  const N=Math.max(1,Math.min(buenos>=2?buenos:L.length,fijo?4:6));
+  return L[(blk+seed+off)%N];
+}
+// Ajusta el plato a las metas de la comida; los grupos que el plato no tiene se añaden como acompañantes
+function aplicarPlato(p,pl,k,tg,d,seed,ctx,dia){
+  const out=[];
+  // si el plato pierde un grupo completo, su nombre ya no describe la comida: se marca para mostrarla sin nombre
+  aplicarPlato.perdio = !!pl && pl.items.some(([f])=>{ const g=AL[f]?.g; return g && !(tg[g]>0); });
+  GK.forEach(g=>{ const t=tg[g]||0; if(!t) return;
+    const its=pl?pl.items.filter(([f])=>AL[f]?.g===g):[];
+    if(its.length){
+      const tot=its.reduce((s,[,n])=>s+n,0);
+      let arr=its.map(([f,n])=>({f,n:Math.round(n*t/tot*2)/2})).sort((a,b)=>b.n-a.n);
+      arr[0].n+=t-arr.reduce((s,x)=>s+x.n,0); arr=arr.filter(x=>x.n>0);
+      if(!arr.length) arr=[{f:its[0][0],n:t}];
+      arr.forEach(x=>ctx.usados.add(x.f)); out.push(...arr);
+    } else {
+      const fijo1=(g==='lac'||g==='gra'); // leche y aceite/aguacate: acompañante estable, sin rotar
+      const extra=elegir(p,g,k,t,fijo1?0:d,fijo1?0:seed,ctx.ex,ctx.pref,ctx.dm,{...dia,_cur:out});
+      extra.forEach(x=>ctx.usados.add(x.f)); out.push(...extra);
+    }
+  });
+  return out;
+}
+function generarDia(p,d,seed){
+  autoCfg(p);
+  const obj=objetivosComida(p), ctx=ctxPac(p), dia={};
+  p.platos=p.platos||{}; p.platos[d]={};
+  Object.keys(obj).forEach(k=>{
+    const pl=elegirPlato(p,k,obj[k],d,seed,ctx);
+    dia[k]=aplicarPlato(p,pl,k,obj[k],d,seed,ctx,dia);
+    p.platos[d][k]=pl&&!aplicarPlato.perdio?pl.id:'';
   });
   return dia;
 }
+
+/* ---------- Cantidades caseras legibles ---------- */
+function fmtNum(v){
+  const w=Math.floor(v+1e-9), f=v-w, F=[[0,''],[0.25,'1/4'],[1/3,'1/3'],[0.5,'1/2'],[2/3,'2/3'],[0.75,'3/4'],[1,'']];
+  let best=F[0]; F.forEach(x=>{ if(Math.abs(x[0]-f)<Math.abs(best[0]-f)) best=x; });
+  const W=best[0]===1?w+1:w, fr=best[1];
+  return W&&fr?`${W} ${fr}`:W?`${W}`:fr||'0';
+}
+const PLURAL={taza:'tazas',unidad:'unidades',rebanada:'rebanadas',cucharada:'cucharadas',cucharadita:'cucharaditas',lata:'latas',pequeña:'pequeñas',mediana:'medianas',grande:'grandes',picada:'picadas'};
+function fmtCant(a,n){
+  const m=String(a.cas).match(/^(\d+\/\d+|\d+(?:[.,]\d+)?)\s+(.*)$/);
+  if(!m) return `${fmtNum(n)} × ${a.cas}`;
+  const base=m[1].includes('/')?(+m[1].split('/')[0])/(+m[1].split('/')[1]):+m[1].replace(',','.');
+  const v=base*n; let rest=m[2];
+  rest=rest.replace(/\((\d+(?:[.,]\d+)?)\s*(g|ml)\)/,(_,x,u)=>`(${Math.round(+x.replace(',','.')*n)} ${u})`);
+  if(/^(g|ml)\b/.test(rest)) return `${Math.round(v)} ${rest}`;
+  if(v>1) rest=rest.split(' ').map(w=>PLURAL[w]||w).join(' ');
+  return `${fmtNum(v)} ${rest}`;
+}
+const lineaAl = it => { const a=AL[it.f]; return a?`${a.n}: ${fmtCant(a,+it.n||0)}`:''; };
+// Texto de una comida: plato, lo que lleva y lo que acompaña
+function platoInfo(p,d,k){
+  const items=(p.menu[d]?.[k]||[]).filter(it=>AL[it.f]&&(+it.n>0)), pl=PLATOS_IDX[p.platos?.[d]?.[k]];
+  if(!pl) return {nombre:'',lleva:items.map(lineaAl),acomp:[],prep:'',libre:LIBRE[tipoComida(k)]||''};
+  const idx=f=>pl.items.findIndex(([x])=>x===f);
+  const ll=items.filter(it=>idx(it.f)>=0).sort((a,b)=>idx(a.f)-idx(b.f)), ac=items.filter(it=>idx(it.f)<0);
+  return {nombre:pl.n,lleva:ll.map(lineaAl),acomp:ac.map(lineaAl),prep:pl.prep,libre:LIBRE[tipoComida(k)]||''};
+}
+function platoHTML(p,d,k){
+  const i=platoInfo(p,d,k); if(!i.lleva.length&&!i.acomp.length) return '<span class="sub">Sin definir</span>';
+  return `${i.nombre?`<b>${esc(i.nombre)}</b><br>`:''}${i.lleva.length?`${i.nombre?'Lleva: ':''}${esc(i.lleva.join(' · '))}<br>`:''}${i.acomp.length?`Acompañe con: ${esc(i.acomp.join(' · '))}<br>`:''}${i.libre?`<span style="color:#5a6878">${esc(i.libre)}.</span>`:''}${i.prep?`<br><i style="color:#5a6878">${esc(i.prep)}</i>`:''}`;
+}
+
+/* ============================================================
+   EXPORTAR A WORD (.docx) sin librerías: XML de Office + ZIP propio
+   ============================================================ */
+const CRC_T=(()=>{ const t=new Uint32Array(256); for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=c&1?0xEDB88320^(c>>>1):c>>>1; t[n]=c>>>0; } return t; })();
+function crc32(u8){ let c=0xFFFFFFFF; for(let i=0;i<u8.length;i++) c=CRC_T[(c^u8[i])&255]^(c>>>8); return (c^0xFFFFFFFF)>>>0; }
+// ZIP sin compresión (método "store"), suficiente y válido para .docx
+function zipStore(files){
+  const enc=new TextEncoder(), parts=[], central=[]; let off=0;
+  const u16=v=>[v&255,(v>>>8)&255], u32=v=>[v&255,(v>>>8)&255,(v>>>16)&255,(v>>>24)&255];
+  files.forEach(({name,data})=>{
+    const nm=enc.encode(name), d=typeof data==='string'?enc.encode(data):data, crc=crc32(d);
+    const head=new Uint8Array([...u32(0x04034b50),...u16(20),...u16(0x0800),...u16(0),...u16(0),...u16(0x21),...u32(crc),...u32(d.length),...u32(d.length),...u16(nm.length),...u16(0)]);
+    parts.push(head,nm,d);
+    central.push(new Uint8Array([...u32(0x02014b50),...u16(20),...u16(20),...u16(0x0800),...u16(0),...u16(0),...u16(0x21),...u32(crc),...u32(d.length),...u32(d.length),...u16(nm.length),...u16(0),...u16(0),...u16(0),...u16(0),...u32(0),...u32(off)]),nm);
+    off+=head.length+nm.length+d.length;
+  });
+  const cSize=central.reduce((s,x)=>s+x.length,0);
+  const end=new Uint8Array([...u32(0x06054b50),...u16(0),...u16(0),...u16(files.length),...u16(files.length),...u32(cSize),...u32(off),...u16(0)]);
+  return new Blob([...parts,...central,end],{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+}
+function dataUriBytes(uri){ const b=atob(uri.split(',')[1]); const u=new Uint8Array(b.length); for(let i=0;i<b.length;i++) u[i]=b.charCodeAt(i); return u; }
+const pngSize = u => [((u[16]<<24)|(u[17]<<16)|(u[18]<<8)|u[19])>>>0, ((u[20]<<24)|(u[21]<<16)|(u[22]<<8)|u[23])>>>0];
+
+function construirDocx(p){
+  const X=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const AZUL='1F6F8F', GRIS='5A6878', LINEA='D5DEE6', W=9906;
+  const r=(t,o={})=>`<w:r><w:rPr>${o.b?'<w:b/>':''}${o.i?'<w:i/>':''}${o.color?`<w:color w:val="${o.color}"/>`:''}${o.sz?`<w:sz w:val="${o.sz}"/><w:szCs w:val="${o.sz}"/>`:''}</w:rPr><w:t xml:space="preserve">${X(t)}</w:t></w:r>`;
+  const P=(runs,o={})=>`<w:p><w:pPr>${o.style?`<w:pStyle w:val="${o.style}"/>`:''}${o.keep?'<w:keepNext/>':''}${o.pb?'<w:pageBreakBefore/>':''}${o.line?`<w:pBdr><w:bottom w:val="single" w:sz="12" w:space="4" w:color="3D9CC0"/></w:pBdr>`:''}<w:spacing w:before="${o.before||0}" w:after="${o.after??60}"/>${o.align?`<w:jc w:val="${o.align}"/>`:''}</w:pPr>${runs}</w:p>`;
+  const bord=on=>`<w:tblBorders>${['top','left','bottom','right','insideH','insideV'].map(s=>`<w:${s} w:val="${on?'single':'nil'}" w:sz="4" w:space="0" w:color="${LINEA}"/>`).join('')}</w:tblBorders>`;
+  const T=(rows,widths,o={})=>`<w:tbl><w:tblPr><w:tblW w:w="${widths.reduce((a,b)=>a+b,0)}" w:type="dxa"/><w:tblLayout w:type="fixed"/>${bord(o.borders!==false)}<w:tblCellMar><w:top w:w="50" w:type="dxa"/><w:left w:w="90" w:type="dxa"/><w:bottom w:w="50" w:type="dxa"/><w:right w:w="90" w:type="dxa"/></w:tblCellMar></w:tblPr><w:tblGrid>${widths.map(w=>`<w:gridCol w:w="${w}"/>`).join('')}</w:tblGrid>${rows.map(row=>{ let ci=0; return `<w:tr><w:trPr><w:cantSplit/></w:trPr>${row.map(c=>{ const cell=typeof c==='string'?{x:c}:c, span=cell.span||1, w=widths.slice(ci,ci+span).reduce((a,b)=>a+b,0); ci+=span;
+      return `<w:tc><w:tcPr><w:tcW w:w="${w}" w:type="dxa"/>${span>1?`<w:gridSpan w:val="${span}"/>`:''}${cell.fill?`<w:shd w:val="clear" w:color="auto" w:fill="${cell.fill}"/>`:''}<w:vAlign w:val="${cell.v||'top'}"/></w:tcPr>${cell.x||'<w:p/>'}</w:tc>`; }).join('')}</w:tr>`; }).join('')}</w:tbl>${P('',{after:60})}`;
+  const img=(rid,id,cx,cy)=>`<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${id}" name="Imagen ${id}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="${id}" name="img${id}.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`;
+  const logo=dataUriBytes(LOGO_PROCEL), firma=dataUriBytes(FIRMA), [lw,lh]=pngSize(logo), [fw,fh]=pngSize(firma);
+  const EMU=360000, lH=Math.round(2.0*EMU), lW=Math.round(lH*lw/lh), fW=Math.round(6.2*EMU), fH=Math.round(fW*fh/fw);
+  const d=p.datos, act=TIEMPOS.filter(([k])=>d.tiempos[k]), vImc=imc(d.peso,d.talla), per=Math.max(1,+d.personas||1);
+  const H1=t=>P(r(t,{b:true,sz:30,color:'14213A'}),{after:80});
+  const H2=(t,o={})=>P(r(t.toUpperCase(),{b:true,sz:21,color:AZUL}),{before:200,after:80,keep:true,...o});
+  let b='';
+  // Membrete
+  b+=T([[{x:P(img('rIdLogo',1,lW,lH)),v:'center'},{x:P(r('Dr. José Procel',{b:true,sz:26}))+P(r('Medicina Familiar · Diabetes y Obesidad',{sz:19,color:GRIS})),v:'center'},{x:P(r('Trinidad Tobago y Brasil',{sz:18,color:GRIS}),{align:'right'})+P(r('Loja, Ecuador',{sz:18,color:GRIS}),{align:'right'}),v:'center'}]],[1700,5006,3200],{borders:false});
+  b+=P('',{line:true,after:160});
+  b+=H1('Plan de alimentación');
+  const kv=(k,v)=>P(r(k+': ',{b:true})+r(v));
+  b+=T([[kv('Paciente',d.nombre),kv('HC',d.hc),kv('Edad',`${d.edad||'—'} años`)],
+        [kv('Peso',`${d.peso||'—'} kg`),kv('Talla',`${d.talla||'—'} cm`),kv('IMC',vImc?String(r1(vImc)):'—')],
+        [kv('Dx CIE-10',d.dx),kv('Plan',`${p.kcalObj} kcal/día`),kv('Fecha',fmtF(hoy()))],
+        [{x:kv('Objetivo',d.objetivo),span:3}]],[3302,3302,3302]);
+  // Porciones
+  b+=H2('Sus porciones por día');
+  const gk=GK.filter(g=>+p.metas[g]>0), filas=[];
+  for(let i=0;i<gk.length;i+=2) filas.push([P(r(GRUPOS[gk[i]].n)),{x:P(r(String(p.metas[gk[i]]),{b:true}),{align:'center'})},gk[i+1]?P(r(GRUPOS[gk[i+1]].n)):'',gk[i+1]?{x:P(r(String(p.metas[gk[i+1]]),{b:true}),{align:'center'})}:'']);
+  b+=T(filas,[3753,1200,3753,1200]);
+  // Menú por día
+  b+=H2('Menú de la semana');
+  b+=P(r('Cada comida es un plato. Las cantidades ya están medidas para usted; puede cambiar un alimento por otro del mismo grupo usando la lista de intercambios del final.',{sz:19,color:GRIS}),{after:100});
+  DIAS.forEach((nd,dd)=>{
+    b+=P(r(nd,{b:true,sz:23,color:'14213A'}),{before:160,after:60,keep:true});
+    const rows=act.map(([k,nk])=>{ const i=platoInfo(p,dd,k); let c='';
+      if(!i.lleva.length&&!i.acomp.length) c=P(r('Sin definir',{i:true,color:GRIS}));
+      else {
+        if(i.nombre) c+=P(r(i.nombre,{b:true,sz:21}));
+        if(i.lleva.length) c+=P((i.nombre?r('Lleva: ',{b:true,sz:19}):'')+r(i.lleva.join(' · '),{sz:19}));
+        if(i.acomp.length) c+=P(r('Acompañe con: ',{b:true,sz:19})+r(i.acomp.join(' · '),{sz:19}));
+        if(i.libre) c+=P(r(i.libre+'.',{sz:18,color:GRIS}));
+        if(i.prep) c+=P(r(i.prep,{i:true,sz:18,color:GRIS}));
+      }
+      return [{x:P(r(nk,{b:true,color:AZUL})),fill:'EEF2F5'},c]; });
+    b+=T(rows,[2000,7906]);
+  });
+  // Lista de mercado
+  const L=listaMercado(p);
+  if(L.length){
+    b+=H2(`Lista de mercado (${per} persona${per>1?'s':''})`,{pb:true});
+    const rows=[]; let g0=null;
+    L.forEach(x=>{ if(x.a.g!==g0){ g0=x.a.g; rows.push([{x:P(r(GRUPOS[g0].n,{b:true,color:AZUL})),span:2,fill:'EEF2F5'}]); }
+      rows.push([P(r('☐ '+x.a.n)),{x:P(r(x.gr>=1000?`${r1(x.gr/1000)} kg`:`${Math.round(x.gr)} g`),{align:'right'})}]); });
+    b+=T(rows,[7406,2500]);
+    b+=P(r('Peso de porción servida (cocido cuando aplica). Para cereales y leguminosas secas compre aproximadamente la mitad.',{sz:17,color:GRIS}));
+  }
+  // Cocina
+  if(p.cocina.length){
+    b+=H2('Cocina de la semana');
+    b+=T([[ 'Preparación','Porciones','Día','Porcionar y guardar'].map(h=>({x:P(r(h,{b:true,sz:18})),fill:'EEF2F5'})),
+      ...p.cocina.map(c=>[P(r(c.prep,{sz:19})),{x:P(r(String(c.porciones),{sz:19}),{align:'center'})},P(r(c.dia,{sz:19})),P(r(c.guardar,{sz:19}))])],[3400,1200,1400,3906]);
+  }
+  // Recomendaciones y control
+  if(p.reco){ b+=H2('Recomendaciones'); String(p.reco).split('\n').filter(x=>x.trim()).forEach(l=>{ b+=P(r('•  ')+r(l.trim())); }); }
+  b+=H2('Próximo control');
+  b+=P(r(`${fmtF(p.proxControl)}. Traiga anotados los días que cumplió el plan.`));
+  b+=P(img('rIdFirma',2,fW,fH),{align:'right',before:300});
+  // Anexo: intercambios
+  b+=H2('Lista de intercambios',{pb:true});
+  b+=P(r('Cada alimento de un mismo grupo vale lo mismo: puede cambiar uno por otro en la cantidad indicada. No cambie entre grupos distintos.',{sz:19,color:GRIS}),{after:100});
+  GK.forEach(g=>{ const G=GRUPOS[g];
+    b+=P(r(`${G.n}  `,{b:true,color:AZUL})+r(`(usted tiene ${p.metas[g]||0} al día · 1 porción = ${G.k} kcal)`,{sz:18,color:GRIS}),{before:120,keep:true});
+    b+=P(r(TIPS[g],{i:true,sz:18,color:GRIS}),{keep:true});
+    b+=T(alimentos().filter(a=>a.g===g).map(a=>[P(r(a.n,{sz:19})),{x:P(r(a.cas,{sz:19}),{align:'right'})}]),[6406,3500]);
+  });
+  b+=P(r('Agua, aromáticas y café sin azúcar, limón, ajo, cebolla, culantro, perejil, especias y vinagre son libres.',{sz:18,color:GRIS}));
+
+  const doc=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>${b}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1000" w:right="1000" w:bottom="1000" w:left="1000" w:header="500" w:footer="500" w:gutter="0"/></w:sectPr></w:body></w:document>`;
+  const styles=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Calibri"/><w:sz w:val="20"/><w:szCs w:val="20"/><w:lang w:val="es-EC"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="60" w:line="259" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults><w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style><w:style w:type="table" w:default="1" w:styleId="TableNormal"><w:name w:val="Normal Table"/><w:tblPr><w:tblInd w:w="0" w:type="dxa"/><w:tblCellMar><w:top w:w="0" w:type="dxa"/><w:left w:w="108" w:type="dxa"/><w:bottom w:w="0" w:type="dxa"/><w:right w:w="108" w:type="dxa"/></w:tblCellMar></w:tblPr></w:style></w:styles>`;
+  const ct=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>`;
+  const rels=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`;
+  const drels=`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rIdLogo" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/logo.png"/><Relationship Id="rIdFirma" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/firma.png"/></Relationships>`;
+  return zipStore([{name:'[Content_Types].xml',data:ct},{name:'_rels/.rels',data:rels},{name:'word/document.xml',data:doc},{name:'word/styles.xml',data:styles},{name:'word/_rels/document.xml.rels',data:drels},{name:'word/media/logo.png',data:logo},{name:'word/media/firma.png',data:firma}]);
+}
+
+/* ---------- Descargas: archivo local (navegador) o página publicada (capacidad downloads) ---------- */
+async function descargar(nombre,blob){
+  if(location.protocol==='file:'||!window.claude){
+    const url=URL.createObjectURL(blob), a=document.createElement('a'); a.href=url; a.download=nombre; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),1500);
+    toast('Archivo descargado'); return;
+  }
+  const dl=await window.claude.use('downloads');
+  if(!dl){ toast('Las descargas no están disponibles aquí; usa el archivo HTML en tu computador'); return; }
+  try{ await dl.save({filename:nombre,data:blob}); toast('Archivo guardado'); }
+  catch(e){ toast(e?.code==='declined'?'Descarga cancelada':'No se pudo descargar el archivo'); }
+}
+function nombreArchivo(p,tipo,ext){ const n=norm(p.datos.nombre||'paciente').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,''); return `${tipo}-${n}-${hoy()}.${ext}`; }
 // Cocina de la semana a partir de almuerzos y meriendas
 function cocinaAuto(p){
+  if(frecCocina(p.datos)==='diario') return [];
   const diasC=[0,1,2,3,4,5,6].filter(i=>p.datos.diasCocina[i]); if(!diasC.length) diasC.push(6);
   const per=Math.max(1,+p.datos.personas||1), noLote=['pan','tortilla','galleta','avena','huevo','clara','queso','atun','sardina','pavo',...CRUDAS];
   const mapa={};
@@ -634,9 +904,12 @@ paciente(p){
       <div id="calc" style="margin-top:12px"></div>
     </div>
     <div class="card"><h3>Su casa y su rutina</h3>
-      <div class="fields">${fld('datos.personas','Personas que comen en casa','number','min="1"')}${fld('datos.tiempoCocina','Tiempo para cocinar a la semana (min)','number','step="10"')}</div>
-      <div class="lbl" style="margin-top:12px">Días en que cocina</div>
-      <div class="days" style="margin-top:6px">${DIAS.map((n,i)=>`<label class="row" style="gap:4px"><input type="checkbox" id="dc_${i}" data-bind="datos.diasCocina.${i}" ${d.diasCocina[i]?'checked':''}>${n.slice(0,3)}</label>`).join('')}</div>
+      <div class="fields">${fld('datos.personas','¿Cuántas personas comen en casa?','number','min="1"')}
+        <label class="f">¿Cada cuánto cocina?<select id="frecCocina" data-act="frecCocina">
+          <option value="diario" ${frecCocina(d)==='diario'?'selected':''}>Todos los días</option>
+          <option value="dos" ${frecCocina(d)==='dos'?'selected':''}>2 veces por semana (domingo y miércoles)</option>
+          <option value="uno" ${frecCocina(d)==='uno'?'selected':''}>1 vez por semana (domingo)</option></select></label></div>
+      <p class="note" style="margin-top:6px">Sirve para armar el menú: si cocina pocas veces, el almuerzo y la merienda se repiten unos días y la app indica qué cocinar por adelantado y qué congelar.</p>
       <div class="grid" style="margin-top:12px;gap:6px">${chk('datos.congelador','Tiene congelador con espacio')}${chk('datos.microondasTrabajo','Tiene microondas donde almuerza')}${chk('datos.comeFuera','Almuerza fuera de casa con frecuencia')}</div>
       <div class="lbl" style="margin-top:12px">Tiempos de comida que hace</div>
       <div class="days" style="margin-top:6px">${TIEMPOS.map(([k,n])=>`<label class="row" style="gap:4px"><input type="checkbox" id="t_${k}" data-bind="datos.tiempos.${k}" data-rerender="1" ${d.tiempos[k]?'checked':''}>${n}</label>`).join('')}</div>
@@ -658,14 +931,18 @@ menu(p){
   const optsF=(g,f)=>alimentos().filter(a=>a.g===g).map(a=>`<option value="${a.id}" ${a.id===f?'selected':''}>${esc(a.n)}</option>`).join('');
   const comidas=TIEMPOS.filter(([k])=>p.datos.tiempos[k]).map(([k,n])=>{
     const items=dia[k]||[]; const kc=items.reduce((s,it)=>s+(AL[it.f]?GRUPOS[AL[it.f].g].k*(+it.n||0):0),0);
+    const plId=p.platos?.[diaSel]?.[k]||'', pl=PLATOS_IDX[plId], ctxS=ctxPac(p);
+    const opsP=platosAptos(p,k,ctxS).map(x=>`<option value="${x.id}" ${x.id===plId?'selected':''}>${esc(x.n)}</option>`).join('');
     return `<div class="meal"><div class="meal-h"><h3>${n}</h3><span class="sub num">${Math.round(kc)} kcal</span></div>
+      <div class="row" style="margin-bottom:8px"><select id="pl_${k}" aria-label="Plato de ${n}" data-act="setPlato" data-m="${k}" style="flex:1 1 260px;font-weight:600"><option value="">Sin plato (alimentos sueltos)</option>${opsP}</select></div>
+      ${pl?.prep?`<div class="note" style="margin:-2px 0 8px">${esc(pl.prep)}</div>`:''}
       ${items.map((it,i)=>{ const a=AL[it.f]||{g:'cer'}; const n_=+it.n||0;
         return `<div class="item">
           <span class="bar-g" style="background:var(--g-${a.g})"></span>
           <select class="sel-g" id="g_${k}_${i}" aria-label="Grupo" data-act="setG" data-m="${k}" data-i="${i}">${optsG(a.g)}</select>
           <select class="sel-f" id="a_${k}_${i}" aria-label="Alimento" data-act="setF" data-m="${k}" data-i="${i}">${optsF(a.g,it.f)}</select>
           <input type="number" id="n_${k}_${i}" aria-label="Intercambios" min="0" step="0.5" value="${it.n}" data-act="setN" data-m="${k}" data-i="${i}">
-          <span class="cas">${a.cas?`${n_}× ${esc(a.cas)} · ${Math.round(a.gr*n_)} g`:''}</span>
+          <span class="cas">${a.cas?`${esc(fmtCant(a,n_))} · ${Math.round(a.gr*n_)} g`:''}</span>
           <button class="btn x" title="Quitar" aria-label="Quitar" data-act="delItem" data-m="${k}" data-i="${i}">×</button></div>`; }).join('')}
       <button class="btn sm" data-act="addItem" data-m="${k}">+ Alimento</button></div>`;
   }).join('');
@@ -758,11 +1035,10 @@ cocina(p){
     <td><button class="btn x" data-act="delCocina" data-i="${i}" aria-label="Quitar">×</button></td></tr>`).join('');
   return `
   <div class="grid tiles" style="margin-bottom:14px">
-    <div class="card"><div class="lbl">Días de cocina</div><div class="big" style="font-size:1.3rem">${diasC.join(', ')||'—'}</div><div class="sub">Se editan en Paciente</div></div>
-    <div class="card"><div class="lbl">Tiempo disponible</div><div class="big">${disp} <small style="font-size:.9rem">min</small></div><div class="sub">${r1(disp/60)} horas</div></div>
-    <div class="card"><div class="lbl">Tiempo planificado</div><div class="big">${tot} <small style="font-size:.9rem">min</small></div>
-      <span class="pill ${tot<=disp?'p-ok':'p-bad'}">${tot<=disp?'Cabe en su tiempo':`Excede ${tot-disp} min`}</span></div>
+    <div class="card"><div class="lbl">Cocina</div><div class="big" style="font-size:1.3rem">${{diario:'Todos los días',dos:'Domingo y miércoles',uno:'Solo el domingo'}[frecCocina(p.datos)]}</div><div class="sub">Se cambia en Paciente</div></div>
+    <div class="card"><div class="lbl">Tiempo estimado de cocina</div><div class="big">${r1(tot/60)} <small style="font-size:.9rem">horas</small></div><div class="sub">${tot} minutos en la semana</div></div>
   </div>
+  ${frecCocina(p.datos)==='diario'?'<div class="card" style="margin-bottom:14px"><b>Este paciente cocina todos los días.</b> No necesita cocinar por adelantado; esta sección es opcional.</div>':''}
   <div class="card"><div class="row" style="justify-content:space-between;margin-bottom:8px"><h3>Preparaciones base</h3>
     <div class="row"><button class="btn sm" data-act="sugerirCocina">Sugerir desde el menú</button><button class="btn sm pri" data-act="addCocina">+ Preparación</button></div></div>
     <div class="tw"><table><thead><tr><th>Preparación</th><th>Porciones</th><th>Tandas</th><th>Min/tanda</th><th>Día</th><th>Porcionar y guardar</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -872,7 +1148,7 @@ plan(p){
   return `
   <div class="row noprint" style="justify-content:space-between;margin-bottom:12px">
     <div class="sub">Vista lista para imprimir en A4. ${esFile?'':'Para imprimir o guardar en PDF, abre el archivo HTML descargado en tu computador.'}</div>
-    ${esFile?'<button class="btn pri" data-act="imprimir">Imprimir / PDF</button>':''}</div>
+    <div class="row"><button class="btn pri" data-act="word">Descargar Word (.docx)</button>${esFile?'<button class="btn" data-act="imprimir">Imprimir / PDF</button>':''}</div></div>
   <div class="card noprint" style="margin-bottom:12px"><label class="f">Recomendaciones para el paciente<textarea id="reco" data-bind="reco">${esc(p.reco)}</textarea></label></div>
   <div class="sheet">
     <div class="mh"><div class="row" style="gap:14px;align-items:center"><img src="${LOGO_PROCEL}" alt="PROCEL" style="height:78px;width:auto"><div class="doc"><b>Dr. José Procel</b><small>Medicina Familiar · Diabetes y Obesidad</small></div></div>
@@ -885,9 +1161,9 @@ plan(p){
     </div>
     <h4>Porciones por día</h4>
     <table><thead><tr>${GK.map(g=>`<th>${GRUPOS[g].n}</th>`).join('')}</tr></thead><tbody><tr>${GK.map(g=>`<td>${p.metas[g]}</td>`).join('')}</tr></tbody></table>
-    <h4>Menú semanal</h4>
-    <table><thead><tr><th>Día</th>${act.map(([,n])=>`<th>${n}</th>`).join('')}</tr></thead><tbody>
-    ${DIAS.map((n,dd)=>`<tr><td><b>${n}</b></td>${act.map(([k])=>`<td>${celda(dd,k)}</td>`).join('')}</tr>`).join('')}</tbody></table>
+    <h4>Menú de la semana</h4>
+    <table><tbody>
+    ${DIAS.map((n,dd)=>`<tr><td colspan="2" style="background:#eef2f5;font-weight:700;font-size:12px">${n}</td></tr>${act.map(([k,nk])=>`<tr><td style="width:18%;color:#1f6f8f;font-weight:600">${nk}</td><td>${platoHTML(p,dd,k)}</td></tr>`).join('')}`).join('')}</tbody></table>
     <h4>Lista de mercado (${Math.max(1,+d.personas||1)} personas)</h4>
     <div style="columns:3 160px;column-gap:18px">${L.map(x=>`<div>☐ ${esc(x.a.n)} · ${x.gr>=1000?r1(x.gr/1000)+' kg':Math.round(x.gr)+' g'}</div>`).join('')}</div>
     ${p.cocina.length?`<h4>Cocina de la semana</h4><table><thead><tr><th>Preparación</th><th>Porciones</th><th>Día</th><th>Porcionar y guardar</th></tr></thead><tbody>${p.cocina.map(c=>`<tr><td>${esc(c.prep)}</td><td>${c.porciones}</td><td>${esc(c.dia)}</td><td>${esc(c.guardar)}</td></tr>`).join('')}</tbody></table>`:''}
@@ -932,6 +1208,16 @@ document.addEventListener('change',e=>{
   if(t.id==='impFile'){ importar(t.files[0]); t.value=''; return; }
   if(t.id==='repDia'){ diaSel=+t.value; render(); return; }
   const a=t.dataset.act;
+  if(a==='frecCocina'){
+    p.datos.diasCocina={diario:[true,true,true,true,true,true,true],dos:[false,false,true,false,false,false,true],uno:[false,false,false,false,false,false,true]}[t.value];
+    autoCfg(p).variedad=t.value==='diario'?'alta':'practica'; guardar(); toast('Guardado'); return;
+  }
+  if(a==='setPlato'){
+    const k=t.dataset.m; autoCfg(p); p.platos=p.platos||{}; p.platos[diaSel]=p.platos[diaSel]||{};
+    if(t.value){ const obj=objetivosComida(p)[k]||{}, dia={...(p.menu[diaSel]||{})}; delete dia[k];
+      p.menu[diaSel]=p.menu[diaSel]||{}; p.menu[diaSel][k]=aplicarPlato(p,PLATOS_IDX[t.value],k,obj,diaSel,p.auto.seed,ctxPac(p),dia); }
+    p.platos[diaSel][k]=t.value; guardar(); render(); return;
+  }
   if(a==='setG'||a==='setF'||a==='setN'){
     const it=p.menu[diaSel][t.dataset.m][+t.dataset.i];
     if(a==='setG'){ it.f=alimentos().find(x=>x.g===t.value).id; }
@@ -971,8 +1257,8 @@ document.addEventListener('click',e=>{
     cancelGen(){ $('#genConfirm').innerHTML=''; },
     addItem(){ const m=b.dataset.m; p.menu[diaSel]=p.menu[diaSel]||{}; (p.menu[diaSel][m]=p.menu[diaSel][m]||[]).push({f:'arroz',n:1}); guardar(); render(); },
     delItem(){ p.menu[diaSel][b.dataset.m].splice(i,1); guardar(); render(); },
-    copiarDia(){ const dest=$('#copiaA').value, src=JSON.stringify(p.menu[diaSel]||{}); const ds=dest==='all'?[0,1,2,3,4,5,6].filter(x=>x!==diaSel):[+dest]; ds.forEach(x=>p.menu[x]=JSON.parse(src)); guardar(); render(); toast(`${DIAS[diaSel]} copiado`); },
-    limpiarDia(){ p.menu[diaSel]={}; guardar(); render(); },
+    copiarDia(){ const dest=$('#copiaA').value, src=JSON.stringify(p.menu[diaSel]||{}); const ds=dest==='all'?[0,1,2,3,4,5,6].filter(x=>x!==diaSel):[+dest]; p.platos=p.platos||{}; const sp=JSON.stringify(p.platos[diaSel]||{}); ds.forEach(x=>{ p.menu[x]=JSON.parse(src); p.platos[x]=JSON.parse(sp); }); guardar(); render(); toast(`${DIAS[diaSel]} copiado`); },
+    limpiarDia(){ p.menu[diaSel]={}; if(p.platos) p.platos[diaSel]={}; guardar(); render(); },
     sugerir(){ p.metas=sugerirMetas(+p.kcalObj||1600); guardar(); render(); toast('Metas recalculadas'); },
     aplicarKcal(){ p.kcalObj=+b.dataset.k; p.metas=sugerirMetas(p.kcalObj); guardar(); actualizarCalc(); toast(`Plan ajustado a ${p.kcalObj} kcal`); },
     limpiarCompras(){ p.compras={}; guardar(); render(); },
@@ -993,6 +1279,7 @@ document.addEventListener('click',e=>{
     addAbono(){ p.pagos.abonos.push({id:uid(),fecha:hoy(),monto:0}); guardar(); render(); },
     delAbono(){ p.pagos.abonos.splice(i,1); guardar(); render(); },
     imprimir(){ window.print(); },
+    word(){ try{ descargar(nombreArchivo(p,'plan','docx'),construirDocx(p)); }catch(err){ console.error(err); toast('No se pudo generar el Word'); } },
     exportar(){ exportar(); }
   };
   acciones[a]?.();
@@ -1000,14 +1287,7 @@ document.addEventListener('click',e=>{
 
 /* ---------- Respaldo ---------- */
 function exportar(){
-  const json=JSON.stringify(S,null,1);
-  if(location.protocol==='file:'){
-    const blob=new Blob([json],{type:'application/json'}), url=URL.createObjectURL(blob), aEl=document.createElement('a');
-    aEl.href=url; aEl.download=`respaldo-plan-nutricional-${hoy()}.json`; document.body.appendChild(aEl); aEl.click(); aEl.remove(); setTimeout(()=>URL.revokeObjectURL(url),1000);
-    toast('Respaldo descargado');
-  } else {
-    navigator.clipboard?.writeText(json).then(()=>toast('Respaldo copiado. Pégalo en un archivo .json'),()=>toast('No se pudo copiar el respaldo'));
-  }
+  descargar(`respaldo-plan-nutricional-${hoy()}.json`, new Blob([JSON.stringify(S,null,1)],{type:'application/json'}));
 }
 function importar(file){
   if(!file) return; const r=new FileReader();
@@ -1015,5 +1295,8 @@ function importar(file){
   r.readAsText(file);
 }
 
+// El paciente de ejemplo se arma con platos al abrir por primera vez
+idxAl();
+S.pacientes.forEach(p=>{ if(p.ejemplo&&!p.platos){ autoCfg(p); const prev={...p.auto}; Object.assign(p.auto,{recalc:false,reco:false,cocina:true}); generarSemana(p); Object.assign(p.auto,prev); guardar(); } });
 render();
 </script>
